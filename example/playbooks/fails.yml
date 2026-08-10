@@ -1,0 +1,17 @@
+---
+# The one that fails. Worth running deliberately: a tool that only ever shows
+# green is not one you can trust with a real deploy. One host fails while the
+# others succeed, so the recap shows a mixed result, the run is recorded with a
+# non-zero exit, and the picker's "last:" line turns red.
+- name: Succeed on most hosts and fail on one
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: This part works everywhere
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} is fine so far"
+
+    - name: Fail on the database host only
+      ansible.builtin.fail:
+        msg: "deliberate sandbox failure on {{ inventory_hostname }}"
+      when: "'db' in group_names"

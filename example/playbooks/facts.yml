@@ -1,0 +1,21 @@
+---
+# The noisy one. Gathering facts produces a lot of output quickly, which is what
+# the scrollback is for: run it, then page up and down with the arrow keys while
+# it is still going. Read-only — it inspects the local machine and changes
+# nothing.
+- name: Gather facts and print a summary
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: Show what was gathered
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}:
+          {{ ansible_distribution }} {{ ansible_distribution_version }},
+          kernel {{ ansible_kernel }},
+          {{ ansible_processor_vcpus }} vcpus,
+          {{ (ansible_memtotal_mb / 1024) | round(1) }} GB memory
+
+    - name: Show the mounted filesystems
+      ansible.builtin.debug:
+        var: ansible_mounts
