@@ -328,7 +328,7 @@ func TestPickerView(t *testing.T) {
 	out := m.View()
 	t.Logf("\n%s", out)
 
-	for _, want := range []string{"inventories", "playbooks", "dev", "prod", "site", "last:", "2h"} {
+	for _, want := range []string{"INVENTORIES", "PLAYBOOKS", "dev", "prod", "site", "last", "2h"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("picker is missing %q:\n%s", want, out)
 		}
@@ -352,7 +352,7 @@ func TestPickerView(t *testing.T) {
 	if !m.asking {
 		t.Fatal("production run started without asking for confirmation")
 	}
-	if out := m.View(); !strings.Contains(out, "type prod to confirm") {
+	if out := m.View(); !strings.Contains(out, "PRODUCTION") || !strings.Contains(out, "esc to cancel") {
 		t.Errorf("confirmation prompt not rendered:\n%s", out)
 	}
 

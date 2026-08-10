@@ -9,17 +9,25 @@ opens no SSH connections, and holds no state your repository does not already
 describe.
 
 ```
-ansible-tui  /srv/infra
-
-▸ inventories                          playbooks
-  dev                                ▸ site
-  prod                                 audit
-
-$ ansible-playbook -i inventories/dev playbooks/site.yml
-last: ok on dev, 48s, 2h ago
-
-tab switch · ↑/↓ move · enter run · c toggle · o overview · q quit   check-mode off
+╭──────────────────────────────────────────────────────────────────────────╮
+│ ansible-tui  /srv/infra                                     CHECK MODE   │
+╰──────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────╮╭──────────────────────────────────────╮
+│ INVENTORIES                      ││ PLAYBOOKS                            │
+│ ▸ dev                            ││   audit                              │
+│   prod                           ││ ▸ site                               │
+╰──────────────────────────────────╯╰──────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────╮
+│ $ ansible-playbook -i inventories/dev --check playbooks/site.yml         │
+│ last   ✓ ok  ·  dev  ·  48s  ·  2h ago                                   │
+╰──────────────────────────────────────────────────────────────────────────╯
+ tab switch  ·  ↑↓ move  ·  ⏎ run  ·  c check  ·  o overview  ·  q quit
 ```
+
+The focused column takes the accent colour, so it is always obvious which one
+the arrow keys will move. Colour carries meaning rather than decoration: green
+succeeded, red failed, amber means the run is not the real thing. Everything
+adapts to light and dark terminals.
 
 ## Install
 

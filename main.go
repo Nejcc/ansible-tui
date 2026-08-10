@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 type view int
@@ -29,39 +29,33 @@ const (
 type model struct {
 	repo Repo
 
-	view    view
-	focus   int
-	invIdx  int
-	pbIdx   int
-	check   bool
-	warn    string
-	confirm string // typed production confirmation, empty when not confirming
+	view   view
+	focus  int
+	invIdx int
+	pbIdx  int
+	check  bool
+	warn   string
+
+	// asking guards a production run; confirm holds what has been typed so far.
 	asking  bool
+	confirm string
 
 	vp      viewport.Model
+	spin    spinner.Model
 	body    strings.Builder
 	msgs    chan any
 	runner  *Runner
 	started time.Time
-	status  string
 	live    bool
+	done    Run
 
-	hist    map[string]Run
 	runs    []Run
+	hist    map[string]Run
 	histIdx int
 
 	width, height int
 	ready         bool
 }
-
-var (
-	titleStyle    = lipgloss.NewStyle().Bold(true)
-	selectedStyle = lipgloss.NewStyle().Reverse(true)
-	dimStyle      = lipgloss.NewStyle().Faint(true)
-	okStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	failStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	warnStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-)
 
 func main() {
 	root, err := os.Getwd()
@@ -69,6 +63,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "ansible-tui:", err)
 		os.Exit(1)
 	}
+
 	var listOnly bool
 	for _, arg := range os.Args[1:] {
 		switch arg {
@@ -109,17 +104,21 @@ func main() {
 	}
 	ignoreState(root)
 
-	m := newModel(root)
-	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(newModel(root), tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "ansible-tui:", err)
 		os.Exit(1)
 	}
 }
 
 func newModel(root string) *model {
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = spinnerStyle
+
 	m := &model{
 		repo: Discover(root),
 		msgs: make(chan any, 64),
+		spin: s,
 	}
 	m.reloadHistory()
 	return m
@@ -132,13 +131,16 @@ func (m *model) reloadHistory() {
 
 func (m *model) Init() tea.Cmd { return waitFor(m.msgs) }
 
-// waitFor turns the runner's channel into a stream of bubbletea messages.
+// waitFor turns the runner's channel into a stream of bubbletea messages. Each
+// message re-arms the wait, so output keeps flowing without polling.
 func waitFor(ch chan any) tea.Cmd {
 	return func() tea.Msg { return <-ch }
 }
 
 type tickMsg time.Time
 
+// tick drives the elapsed-time display, separately from the spinner's own
+// faster animation.
 func tick() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
@@ -146,17 +148,7 @@ func tick() tea.Cmd {
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		h := msg.Height - 4
-		if h < 3 {
-			h = 3
-		}
-		if !m.ready {
-			m.vp = viewport.New(msg.Width, h)
-			m.ready = true
-		} else {
-			m.vp.Width, m.vp.Height = msg.Width, h
-		}
+		m.resize(msg.Width, msg.Height)
 		return m, nil
 
 	case outputMsg:
@@ -168,16 +160,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case doneMsg:
 		m.live = false
 		m.runner = nil
+		m.done = msg.run
 		m.reloadHistory()
-		verb := okStyle.Render("ok")
-		if !msg.run.OK() {
-			verb = failStyle.Render(fmt.Sprintf("failed (exit %d)", msg.run.Exit))
-		}
-		m.status = fmt.Sprintf("%s in %s — esc to go back", verb, dur(msg.run.DurationMS))
 		if msg.err != nil {
 			m.warn = "history not recorded: " + msg.err.Error()
 		}
 		return m, waitFor(m.msgs)
+
+	case spinner.TickMsg:
+		if !m.live {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
 
 	case tickMsg:
 		if m.live {
@@ -191,6 +187,28 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// resize recomputes the viewport, leaving room for the top bar, the output
+// box's own border, and the footer.
+func (m *model) resize(w, h int) {
+	m.width, m.height = w, h
+
+	vpWidth := w - 6
+	if vpWidth < 20 {
+		vpWidth = 20
+	}
+	vpHeight := h - 8
+	if vpHeight < 3 {
+		vpHeight = 3
+	}
+
+	if !m.ready {
+		m.vp = viewport.New(vpWidth, vpHeight)
+		m.ready = true
+		return
+	}
+	m.vp.Width, m.vp.Height = vpWidth, vpHeight
+}
+
 func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.asking {
 		return m.confirmKey(msg)
@@ -202,11 +220,15 @@ func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			if m.live {
 				m.runner.Cancel()
-				m.status = "interrupting…"
 				return m, nil
 			}
 			return m, tea.Quit
-		case "esc", "q":
+		case "q":
+			if !m.live {
+				return m, tea.Quit
+			}
+			return m, nil
+		case "esc":
 			if m.live {
 				return m, nil
 			}
@@ -241,7 +263,7 @@ func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.body.WriteString(readLog(m.repo.Root, r.Log))
 				m.vp.SetContent(m.body.String())
 				m.vp.GotoTop()
-				m.status = fmt.Sprintf("%s on %s — %s", r.Playbook, invName(r.Inventory), r.TS)
+				m.done = r
 				m.view = viewRun
 			}
 			return m, nil
@@ -303,13 +325,10 @@ func (m *model) move(delta int) {
 }
 
 func clamp(i, n int) int {
-	if n == 0 {
+	switch {
+	case n == 0, i < 0:
 		return 0
-	}
-	if i < 0 {
-		return 0
-	}
-	if i >= n {
+	case i >= n:
 		return n - 1
 	}
 	return i
@@ -329,7 +348,7 @@ func (m *model) selectedPlaybook() string {
 	return m.repo.Playbooks[m.pbIdx]
 }
 
-// launch gates production behind a typed confirmation before starting.
+// launch gates production behind a typed confirmation before anything starts.
 func (m *model) launch() (tea.Model, tea.Cmd) {
 	if m.selectedPlaybook() == "" {
 		return m, nil
@@ -347,230 +366,13 @@ func (m *model) start() (tea.Model, tea.Cmd) {
 		m.warn = "could not start: " + err.Error()
 		return m, nil
 	}
+
 	m.runner, m.live = r, true
 	m.started = time.Now()
+	m.done = Run{}
+	m.warn = ""
 	m.body.Reset()
 	m.vp.SetContent("")
-	m.status = ""
 	m.view = viewRun
-	return m, tick()
-}
-
-func (m *model) View() string {
-	if !m.ready {
-		return "loading…"
-	}
-	switch m.view {
-	case viewRun, viewOverview:
-		return m.header() + "\n" + m.vp.View() + "\n" + m.footer()
-	}
-	return m.picker()
-}
-
-func (m *model) header() string {
-	if m.view == viewOverview {
-		return titleStyle.Render("overview — " + m.repo.Root)
-	}
-	title := fmt.Sprintf("%s → %s", m.selectedPlaybook(), invName(m.selectedInventory()))
-	if m.status != "" && !m.live {
-		title = m.status
-	} else if m.live {
-		title += fmt.Sprintf("  %s", time.Since(m.started).Truncate(time.Second))
-		if m.check {
-			title += "  " + warnStyle.Render("[check]")
-		}
-	}
-	return titleStyle.Render(title)
-}
-
-func (m *model) footer() string {
-	if m.view == viewOverview {
-		return dimStyle.Render("↑/↓ select · enter open log · esc back")
-	}
-	if m.live {
-		return dimStyle.Render("ctrl+c interrupt · ↑/↓ scroll")
-	}
-	return dimStyle.Render("esc back · ↑/↓ scroll")
-}
-
-func (m *model) picker() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("ansible-tui") + dimStyle.Render("  "+m.repo.Root) + "\n\n")
-
-	left := column("inventories", m.repo.Inventories, m.invIdx, m.focus == colInventories, invName)
-	right := column("playbooks", m.repo.Playbooks, m.pbIdx, m.focus == colPlaybooks, func(s string) string {
-		return strings.TrimSuffix(filepath.Base(s), filepath.Ext(s))
-	})
-	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left, "   ", right))
-	b.WriteString("\n\n")
-
-	if len(m.repo.Playbooks) == 0 {
-		b.WriteString(warnStyle.Render("no playbooks found in "+m.repo.Root) +
-			dimStyle.Render("\nlooked in playbooks/*.yml and *.yml — is this an ansible repository?\n"))
-	} else {
-		b.WriteString(dimStyle.Render("$ ") + m.commandLine() + "\n")
-	}
-
-	if last, ok := m.hist[m.selectedPlaybook()]; ok {
-		mark := okStyle.Render("ok")
-		if !last.OK() {
-			mark = failStyle.Render(fmt.Sprintf("exit %d", last.Exit))
-		}
-		b.WriteString(dimStyle.Render("last: ") + fmt.Sprintf("%s on %s, %s, %s ago\n",
-			mark, invName(last.Inventory), dur(last.DurationMS), ago(last.When())))
-	} else {
-		b.WriteString(dimStyle.Render("last: never run from here\n"))
-	}
-
-	if m.warn != "" {
-		b.WriteString(warnStyle.Render(m.warn) + "\n")
-	}
-
-	if m.asking {
-		b.WriteString("\n" + failStyle.Render("PRODUCTION — type prod to confirm: ") + m.confirm + "▏\n" +
-			dimStyle.Render("esc to cancel\n"))
-		return b.String()
-	}
-
-	check := dimStyle.Render("check-mode off")
-	if m.check {
-		check = warnStyle.Render("CHECK MODE")
-	}
-	b.WriteString("\n" + dimStyle.Render("tab switch · ↑/↓ move · enter run · c toggle · o overview · q quit") +
-		"   " + check)
-	return b.String()
-}
-
-func (m *model) commandLine() string {
-	parts := []string{"ansible-playbook"}
-	if inv := m.selectedInventory(); inv != "" {
-		parts = append(parts, "-i", inv)
-	}
-	if m.check {
-		parts = append(parts, "--check")
-	}
-	return strings.Join(append(parts, m.selectedPlaybook()), " ")
-}
-
-func column(title string, items []string, idx int, focused bool, label func(string) string) string {
-	head := dimStyle.Render("  " + title)
-	if focused {
-		head = titleStyle.Render("▸ " + title)
-	}
-	rows := []string{head}
-	if len(items) == 0 {
-		rows = append(rows, dimStyle.Render("  (none)"))
-	}
-	for i, it := range items {
-		line := "  " + label(it)
-		if i == idx && focused {
-			line = selectedStyle.Render(line)
-		} else if i == idx {
-			line = "▸ " + label(it)
-		}
-		rows = append(rows, line)
-	}
-	return lipgloss.NewStyle().Width(34).Render(strings.Join(rows, "\n"))
-}
-
-// renderOverview joins the inventory's host tree with the recorded history.
-func (m *model) renderOverview() {
-	var b strings.Builder
-
-	inv := m.selectedInventory()
-	b.WriteString(titleStyle.Render("hosts — "+invName(inv)) + "\n")
-	b.WriteString(hostTree(m.repo.Root, inv))
-
-	b.WriteString("\n" + titleStyle.Render("recent runs") + "\n")
-	if len(m.runs) == 0 {
-		b.WriteString(dimStyle.Render("  nothing recorded yet — runs started outside this program are not tracked\n"))
-	}
-	for i := len(m.runs) - 1; i >= 0; i-- {
-		r := m.runs[i]
-		mark := okStyle.Render("ok  ")
-		if !r.OK() {
-			mark = failStyle.Render(fmt.Sprintf("e%-3d", r.Exit))
-		}
-		flags := ""
-		if r.Check {
-			flags = warnStyle.Render(" [check]")
-		}
-		line := fmt.Sprintf("  %s %-34s %-10s %8s  %s%s",
-			mark, r.Playbook, invName(r.Inventory), dur(r.DurationMS), ago(r.When()), flags)
-		if len(m.runs)-1-i == m.histIdx {
-			line = selectedStyle.Render(line)
-		}
-		b.WriteString(line + "\n")
-	}
-
-	m.body.Reset()
-	m.body.WriteString(b.String())
-	m.vp.SetContent(m.body.String())
-	m.vp.GotoTop()
-}
-
-// hostTree asks ansible for the inventory rather than parsing YAML here.
-// Failure is common (vault-locked or malformed inventories), so the error text
-// is shown in place of the tree instead of being swallowed.
-func hostTree(root, inventory string) string {
-	args := []string{"--list"}
-	if inventory != "" {
-		args = append([]string{"-i", inventory}, args...)
-	}
-	c := exec.Command("ansible-inventory", args...)
-	c.Dir = root
-	c.Env = childEnv(os.Environ())
-
-	out, err := c.CombinedOutput()
-	if err != nil {
-		return warnStyle.Render("  ansible-inventory failed:\n") + indent(string(out))
-	}
-	hosts := parseHosts(out)
-	if len(hosts) == 0 {
-		return dimStyle.Render("  (no hosts)\n")
-	}
-	var b strings.Builder
-	for _, g := range hosts {
-		b.WriteString("  " + g + "\n")
-	}
-	return b.String()
-}
-
-func indent(s string) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	for i, l := range lines {
-		lines[i] = "  " + l
-	}
-	return strings.Join(lines, "\n") + "\n"
-}
-
-func invName(inv string) string {
-	if inv == "" {
-		return "default"
-	}
-	return filepath.Base(inv)
-}
-
-func dur(ms int64) string {
-	if ms <= 0 {
-		return "-"
-	}
-	return (time.Duration(ms) * time.Millisecond).Truncate(time.Second).String()
-}
-
-func ago(t time.Time) string {
-	if t.IsZero() {
-		return "?"
-	}
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	default:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	}
+	return m, tea.Batch(tick(), m.spin.Tick)
 }
