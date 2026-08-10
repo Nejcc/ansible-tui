@@ -1,0 +1,25 @@
+# build output
+/ansible-tui
+*.exe
+
+# run history and logs this program writes into the repository it drives
+.ansible-tui/
+
+# local agent tooling and scratch state — never committed
+.claude/
+.codeium/
+.cursor/
+.aider*
+.continue/
+.github/copilot-instructions.md
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.mcp.json
+graphify-out/
+
+# editor and OS noise
+.idea/
+.vscode/
+*.swp
+.DS_Store
