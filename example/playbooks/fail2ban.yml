@@ -1,0 +1,10 @@
+---
+# tui: security
+# Fixture: prints and exits. See example/README.md.
+- name: Configure intrusion banning
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Configure intrusion banning
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: fail2ban would run here"

@@ -1,0 +1,7 @@
+---
+# Retired. Present so discovery can be seen to skip playbooks/archive/.
+- name: Retired cutover
+  hosts: all
+  gather_facts: false
+  tasks:
+    - ansible.builtin.debug: { msg: "never listed" }

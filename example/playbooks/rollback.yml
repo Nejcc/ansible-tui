@@ -1,0 +1,10 @@
+---
+# tui: deploy
+# Fixture: prints and exits. See example/README.md.
+- name: Roll back the previous release
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Roll back the previous release
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: rollback would run here"

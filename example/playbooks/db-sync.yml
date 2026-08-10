@@ -1,0 +1,23 @@
+---
+# tui: database
+# Fixture: slow on purpose, so the elapsed timer, the spinner and ctrl+c
+# interruption have something to act on. Syncs nothing.
+- name: Nightly database sync
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Dump
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: dumping"
+
+    - name: Transfer
+      ansible.builtin.wait_for:
+        timeout: 12
+
+    - name: Import
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: importing"
+
+    - name: Verify
+      ansible.builtin.wait_for:
+        timeout: 8

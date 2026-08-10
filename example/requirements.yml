@@ -1,0 +1,5 @@
+---
+# Galaxy requirements. Named in discovery's exclusion list: it is configuration,
+# not a play, so it must not appear in the picker.
+collections:
+  - name: community.general

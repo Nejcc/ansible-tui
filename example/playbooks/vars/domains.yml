@@ -1,0 +1,5 @@
+---
+# Variables, not a play. Discovery skips playbooks/vars/.
+domains:
+  - alpha.example.com
+  - beta.example.com

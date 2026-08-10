@@ -1,0 +1,10 @@
+---
+# tui: deploy
+# Fixture: prints and exits. See example/README.md.
+- name: Deploy a WordPress site
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Deploy a WordPress site
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: wordpress-deploy would run here"

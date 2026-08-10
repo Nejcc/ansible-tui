@@ -1,0 +1,10 @@
+---
+# tui: database
+# Fixture: prints and exits. See example/README.md.
+- name: Replace the catalog database
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Replace the catalog database
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: catalog-si-db-replace would run here"

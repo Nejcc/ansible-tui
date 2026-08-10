@@ -1,0 +1,10 @@
+---
+# tui: cutover
+# Fixture: prints and exits. See example/README.md.
+- name: Manager 3 cutover — pre
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Manager 3 cutover — pre
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: manager3-cutover-pre would run here"

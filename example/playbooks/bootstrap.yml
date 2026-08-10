@@ -1,0 +1,10 @@
+---
+# tui: fleet
+# Fixture: prints and exits. See example/README.md.
+- name: Bootstrap a fresh host
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Bootstrap a fresh host
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: bootstrap would run here"

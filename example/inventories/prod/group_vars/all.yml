@@ -1,0 +1,5 @@
+---
+# Shared variables for every host in the prod inventory.
+deploy_user: deploy
+deploy_root: /srv/www
+php_version: "8.4"

@@ -1,0 +1,10 @@
+---
+# tui: cutover
+# Fixture: prints and exits. See example/README.md.
+- name: Manager 3 cutover — rollback
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Manager 3 cutover — rollback
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: manager3-cutover-rollback would run here"

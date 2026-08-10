@@ -1,0 +1,10 @@
+---
+# tui: health
+# Fixture: prints and exits. See example/README.md.
+- name: Check PHP-FPM health
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Check PHP-FPM health
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: php-health-check would run here"

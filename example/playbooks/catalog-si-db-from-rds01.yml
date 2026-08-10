@@ -1,0 +1,10 @@
+---
+# tui: database
+# Fixture: prints and exits. See example/README.md.
+- name: Restore the catalog database from the local mirror
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Restore the catalog database from the local mirror
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: catalog-si-db-from-rds01 would run here"

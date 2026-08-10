@@ -1,0 +1,10 @@
+---
+# tui: database
+# Fixture: prints and exits. See example/README.md.
+- name: Provision the console database
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Provision the console database
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: gen-console-db would run here"

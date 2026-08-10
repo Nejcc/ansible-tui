@@ -1,0 +1,9 @@
+---
+# Fixture: prints and exits. See example/README.md.
+- name: Send a deployment notification
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Send a deployment notification
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: notify-mail would run here"

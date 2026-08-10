@@ -1,0 +1,10 @@
+---
+# tui: deploy
+# Fixture: prints and exits. See example/README.md.
+- name: Deploy a PHP application
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Deploy a PHP application
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: laravel-deploy would run here"

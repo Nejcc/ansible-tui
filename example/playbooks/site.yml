@@ -1,0 +1,35 @@
+---
+# tui: fleet
+# Fixture: the normal case — several tasks across every host, enough output to
+# watch stream in. Prints and pauses; nothing is configured.
+- name: Configure the fleet
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Common packages
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: common would be applied"
+
+    - name: Firewall
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: firewall would be applied"
+
+    - name: SSH hardening
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: ssh would be applied"
+
+    - name: Web server
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: nginx would be applied"
+
+    - name: Settle
+      ansible.builtin.wait_for:
+        timeout: 2
+
+    - name: Application runtime
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: php {{ php_version | default('8.4') }} would be applied"
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: done, changed=0"

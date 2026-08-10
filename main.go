@@ -19,25 +19,44 @@ const (
 	viewPick view = iota
 	viewRun
 	viewOverview
+	viewPreview
 )
 
+// The picker is a sequence, not a form: choose where, then choose what, then
+// look at both together before anything runs. A production mistake is made by
+// running the right playbook against the wrong inventory, and two columns and a
+// tab key put that mistake one keystroke away.
 const (
-	colInventories = iota
-	colPlaybooks
+	stepInventory = iota
+	stepPlaybook
+	stepHosts
+	stepReview
 )
 
 type model struct {
 	repo Repo
 
 	view   view
-	focus  int
+	step   int
 	invIdx int
 	pbIdx  int
 	check  bool
 	warn   string
 
+	// limit is what the run is narrowed to. Empty is the normal case and means
+	// every host the playbook's own `hosts:` resolves to — the same as omitting
+	// --limit. targets caches one `ansible-inventory --list` per inventory,
+	// because it is a subprocess and the picker redraws on every keystroke.
+	hostIdx int
+	limit   map[string]bool
+	targets map[string][]Item
+
 	// asking guards a production run; confirm holds what has been typed so far.
+	// typing distinguishes the two grades of guard: a playbook that changes
+	// things has to have the word written out, one that declares itself
+	// read-only only has to be acknowledged.
 	asking  bool
+	typing  bool
 	confirm string
 
 	vp      viewport.Model
@@ -85,10 +104,25 @@ func main() {
 	if listOnly {
 		repo := Discover(root)
 		fmt.Println(root)
-		report := func(title string, items []string) {
+		// Ungrouped items print flat; grouped ones get a heading wherever the
+		// group changes, the list already being ordered by it.
+		report := func(title string, items []Item) {
 			fmt.Printf("%s (%d)\n", title, len(items))
+			grouped := anyGrouped(items)
+			indent, prev := "  ", "\x00"
+			if grouped {
+				indent = "    "
+			}
 			for _, it := range items {
-				fmt.Println("  " + it)
+				if grouped && it.Group != prev {
+					prev = it.Group
+					fmt.Println("  [" + groupName(prev) + "]")
+				}
+				line := indent + it.Path
+				if it.Desc != "" {
+					line += "  — " + it.Desc
+				}
+				fmt.Println(line)
 			}
 		}
 		report("inventories", repo.Inventories)
@@ -116,9 +150,14 @@ func newModel(root string) *model {
 	s.Style = spinnerStyle
 
 	m := &model{
-		repo: Discover(root),
-		msgs: make(chan any, 64),
-		spin: s,
+		repo:    Discover(root),
+		msgs:    make(chan any, 64),
+		spin:    s,
+		limit:   map[string]bool{},
+		targets: map[string][]Item{},
+		// Dry-run is the resting state. A real run is something you turn on,
+		// deliberately, and only where it is allowed at all.
+		check: true,
 	}
 	m.reloadHistory()
 	return m
@@ -239,6 +278,16 @@ func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.vp, cmd = m.vp.Update(msg)
 		return m, cmd
 
+	case viewPreview:
+		switch msg.String() {
+		case "ctrl+c", "q", "esc", "p":
+			m.view = viewPick
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(msg)
+		return m, cmd
+
 	case viewOverview:
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
@@ -276,25 +325,102 @@ func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
-	case "tab", "left", "right", "h", "l":
-		m.focus = 1 - m.focus
+	case "esc", "left", "h", "backspace":
+		// Back one step, never out of the program: leaving by accident from
+		// here would lose the selection for no good reason.
+		if m.step > stepInventory {
+			m.step--
+		}
 	case "up", "k":
 		m.move(-1)
 	case "down", "j":
 		m.move(1)
+	case " ":
+		if m.step != stepHosts {
+			break
+		}
+		rows := m.hostRows()
+		if m.hostIdx >= len(rows) {
+			break
+		}
+		// The default row is not a member of the selection, it is the absence
+		// of one: choosing it clears whatever else was picked.
+		switch name := rows[m.hostIdx].Path; {
+		case name == "":
+			m.limit = map[string]bool{}
+		case m.limit[name]:
+			delete(m.limit, name)
+		default:
+			m.limit[name] = true
+		}
+	case "a":
+		// Back to the default in one key, from anywhere on the step.
+		if m.step == stepHosts {
+			m.limit = map[string]bool{}
+		}
 	case "c":
+		// Production cannot leave dry-run. This is the one guard that does not
+		// negotiate: the confirmation dialogs stop an accident from starting a
+		// run, and this stops any run that does start from changing production.
+		if m.check && needsConfirm(m.selectedInventory().Path) {
+			m.warn = "production runs are dry-run only — --check cannot be turned off here"
+			return m, nil
+		}
 		m.check = !m.check
+		m.warn = ""
 	case "o":
 		m.histIdx = 0
 		m.renderOverview()
 		m.view = viewOverview
-	case "enter":
+	case "p":
+		// Only from the review: a preview of a playbook needs the inventory
+		// chosen, and the earlier steps have not chosen one yet.
+		if m.step == stepReview {
+			m.renderPreview()
+			m.view = viewPreview
+		}
+	case "enter", "right", "l":
+		return m.advance()
+	}
+	return m, nil
+}
+
+// advance moves to the next step, and from the last one starts the run.
+func (m *model) advance() (tea.Model, tea.Cmd) {
+	switch m.step {
+	case stepInventory:
+		// A repository with no inventories is not stuck here: the run omits -i
+		// and ansible.cfg supplies the default. Changing inventory can shorten
+		// the playbook list, so the cursor is brought back into it.
+		m.pbIdx = clamp(m.pbIdx, len(m.playbooks()))
+		m.hostIdx, m.limit = 0, map[string]bool{}
+		m.step = stepPlaybook
+	case stepPlaybook:
+		if m.selectedPlaybook().Path != "" {
+			m.step = stepHosts
+		}
+	case stepHosts:
+		m.step = stepReview
+	default:
 		return m.launch()
 	}
 	return m, nil
 }
 
 func (m *model) confirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Without typing, enter is the whole guard: nothing has been reached yet by
+	// arrow keys alone, so one more deliberate press is the acknowledgement.
+	if !m.typing {
+		switch msg.String() {
+		case "enter":
+			m.asking = false
+			return m.start()
+		case "esc", "ctrl+c", "q":
+			m.asking = false
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "esc", "ctrl+c":
 		m.asking, m.confirm = false, ""
@@ -317,11 +443,49 @@ func (m *model) confirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) move(delta int) {
-	if m.focus == colInventories {
+	switch m.step {
+	case stepInventory:
 		m.invIdx = clamp(m.invIdx+delta, len(m.repo.Inventories))
-		return
+	case stepPlaybook:
+		m.pbIdx = clamp(m.pbIdx+delta, len(m.playbooks()))
+	case stepHosts:
+		m.hostIdx = clamp(m.hostIdx+delta, len(m.hostRows()))
 	}
-	m.pbIdx = clamp(m.pbIdx+delta, len(m.repo.Playbooks))
+}
+
+// hostTargets are the groups and hosts this inventory resolves to, asked of
+// ansible once per inventory and kept.
+func (m *model) hostTargets() []Item {
+	inv := m.selectedInventory().Path
+	if got, ok := m.targets[inv]; ok {
+		return got
+	}
+	out := listTargets(m.repo.Root, inv)
+	m.targets[inv] = out
+	return out
+}
+
+// hostRows is the list as shown: the default first, then what the inventory
+// resolves to. The default is a row rather than a sentence because a list where
+// nothing is ticked reads as a question not yet answered — this way the answer
+// is visible, selected, and the thing the cursor starts on.
+func (m *model) hostRows() []Item {
+	return append([]Item{{
+		Path:  "",
+		Group: "default",
+		Desc:  "wherever the playbook sends it — nothing narrowed",
+	}}, m.hostTargets()...)
+}
+
+// limits returns what was picked, in the order it is shown, for --limit.
+func (m *model) limits() []string {
+	var out []string
+	for _, it := range m.hostTargets() {
+		if m.limit[it.Path] {
+			out = append(out, it.Path)
+		}
+	}
+	return out
 }
 
 func clamp(i, n int) int {
@@ -334,34 +498,55 @@ func clamp(i, n int) int {
 	return i
 }
 
-func (m *model) selectedInventory() string {
+func (m *model) selectedInventory() Item {
 	if len(m.repo.Inventories) == 0 {
-		return ""
+		return Item{}
 	}
 	return m.repo.Inventories[m.invIdx]
 }
 
-func (m *model) selectedPlaybook() string {
-	if len(m.repo.Playbooks) == 0 {
-		return ""
+// playbooks are those that may run against the inventory now selected. A
+// playbook that names its inventories is not offered against the others: the
+// list is what enter can actually do, and an entry that would only ever fail
+// does not belong in it.
+func (m *model) playbooks() []Item {
+	inv := m.selectedInventory().Path
+	out := make([]Item, 0, len(m.repo.Playbooks))
+	for _, it := range m.repo.Playbooks {
+		if it.RunsOn(inv) {
+			out = append(out, it)
+		}
 	}
-	return m.repo.Playbooks[m.pbIdx]
+	return out
+}
+
+func (m *model) selectedPlaybook() Item {
+	pbs := m.playbooks()
+	if len(pbs) == 0 || m.pbIdx >= len(pbs) {
+		return Item{}
+	}
+	return pbs[m.pbIdx]
 }
 
 // launch gates production behind a typed confirmation before anything starts.
 func (m *model) launch() (tea.Model, tea.Cmd) {
-	if m.selectedPlaybook() == "" {
+	if m.selectedPlaybook().Path == "" {
 		return m, nil
 	}
-	if needsConfirm(m.selectedInventory()) {
+	// Production always asks. A read-only playbook asks for less — one
+	// deliberate keypress rather than the word — because the cost of being
+	// wrong is smaller, not zero: `tui-safe` is a claim the file makes about
+	// itself, and a file can be wrong.
+	if needsConfirm(m.selectedInventory().Path) {
 		m.asking, m.confirm = true, ""
+		m.typing = !m.selectedPlaybook().Safe
 		return m, nil
 	}
 	return m.start()
 }
 
 func (m *model) start() (tea.Model, tea.Cmd) {
-	r, err := Start(m.repo.Root, m.selectedInventory(), m.selectedPlaybook(), m.check, m.msgs)
+	r, err := Start(m.repo.Root, m.selectedInventory().Path, m.selectedPlaybook().Path, m.check, m.msgs)
 	if err != nil {
 		m.warn = "could not start: " + err.Error()
 		return m, nil

@@ -1,0 +1,10 @@
+---
+# tui: security
+# Fixture: prints and exits. See example/README.md.
+- name: Issue and renew TLS certificates
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Issue and renew TLS certificates
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: certbot would run here"

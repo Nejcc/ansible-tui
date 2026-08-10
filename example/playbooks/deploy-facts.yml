@@ -1,0 +1,10 @@
+---
+# tui: deploy
+# Fixture: prints and exits. See example/README.md.
+- name: Collect deployment facts
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Collect deployment facts
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: deploy-facts would run here"

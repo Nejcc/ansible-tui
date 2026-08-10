@@ -1,0 +1,9 @@
+---
+# Fixture: prints and exits. See example/README.md.
+- name: Configure the master node
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Configure the master node
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: master-node-controller would run here"

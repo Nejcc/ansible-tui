@@ -1,0 +1,5 @@
+---
+# An include_tasks fragment, not a play. Discovery skips playbooks/tasks/.
+- name: Notify
+  ansible.builtin.debug:
+    msg: "included, never run on its own"

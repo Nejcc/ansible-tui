@@ -1,0 +1,26 @@
+---
+# tui: fleet
+# Fixture: long fan-out output, for scrolling the run pane. Read-only anyway in
+# a real repository; here it inspects nothing at all.
+- name: Fleet audit
+  hosts: all
+  gather_facts: false
+  vars:
+    checks:
+      - certificate expiry
+      - service status
+      - disk usage
+      - queue workers
+      - clock drift
+      - pending reboot
+      - package updates
+      - failed logins
+  tasks:
+    - name: Check
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ item }} — ok"
+      loop: "{{ checks }}"
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ checks | length }} checks, 0 findings"
